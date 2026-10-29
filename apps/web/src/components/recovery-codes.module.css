@@ -1,0 +1,11 @@
+.codes {
+  margin: 20px 0;
+  padding-left: 24px;
+  display: grid;
+  gap: 10px;
+}
+.codes code {
+  overflow-wrap: anywhere;
+  font-size: 15px;
+  line-height: 1.6;
+}
