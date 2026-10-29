@@ -1,0 +1,14 @@
+{
+  "measuredAt": "2026-10-29T13:27:12.257Z",
+  "viewport": {
+    "width": 360,
+    "height": 800
+  },
+  "buildMode": "development",
+  "scope": "Single local Chromium cold navigation; no network/CPU throttling and no field percentile claim",
+  "lcpMs": 1680,
+  "cls": 0,
+  "coldTransferredBytes": 976853,
+  "resourceCount": 25,
+  "targetCompressedBytes": 512000
+}
