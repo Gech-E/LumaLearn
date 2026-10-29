@@ -1,0 +1,458 @@
+generator client {
+  provider = "prisma-client-js"
+}
+datasource db {
+  provider = "postgresql"
+  url = env("DATABASE_URL")
+}
+
+enum Role {
+  LEARNER
+  INSTRUCTOR
+  ADMIN
+  SUPPORT
+  ACADEMIC_ADMIN
+}
+enum MembershipState {
+  ACTIVE
+  SUSPENDED
+  WITHDRAWN
+}
+enum AssetStatus {
+  UPLOADING
+  QUARANTINED
+  CLEAN
+  REJECTED
+}
+enum OutboxStatus {
+  PENDING
+  QUEUED
+  DONE
+  FAILED
+}
+enum SupportRequestKind {
+  HELP
+  EXPORT
+  DELETION
+}
+enum CourseState {
+  DRAFT
+  REVIEW
+  PUBLISHED
+  ARCHIVED
+}
+enum ActivityKind {
+  LESSON
+  PRACTICE
+  ASSIGNMENT
+}
+enum ProgressState {
+  VIEWED
+  COMPLETED
+  PASSED
+}
+enum EnrollmentState {
+  ACTIVE
+  WITHDRAWN
+  COMPLETED
+}
+enum AttemptState {
+  STARTED
+  SUBMITTED
+}
+enum SubmissionState {
+  DRAFT
+  SUBMITTED
+  REVISION_REQUESTED
+}
+enum QuestionKind {
+  SINGLE
+  MULTIPLE
+  SHORT_TEXT
+}
+
+model User {
+  id String @id @default(uuid())
+  email String @unique
+  name String
+  passwordHash String
+  verifiedAt DateTime?
+  timezone String @default("Africa/Nairobi")
+  locale String @default("en")
+  reminders Boolean @default(false)
+  quietStart String @default("21:00")
+  quietEnd String @default("08:00")
+  mfaSecret String?
+  mfaPendingSecret String?
+  mfaLastUsedStep BigInt?
+  createdAt DateTime @default(now())
+  memberships Membership[]
+  sessions Session[]
+  contactTokens ContactToken[]
+  mfaRecoveryCodes MfaRecoveryCode[]
+  courseAssignments CourseAssignment[]
+  enrollments Enrollment[]
+}
+model Organization {
+  id String @id @default(uuid())
+  name String
+  memberships Membership[]
+  courses Course[]
+}
+model Membership {
+  id String @id @default(uuid())
+  userId String
+  organizationId String
+  state MembershipState @default(ACTIVE)
+  user User @relation(fields:[userId], references:[id])
+  organization Organization @relation(fields:[organizationId], references:[id])
+  roles RoleAssignment[]
+  sessions Session[]
+  @@unique([userId,organizationId])
+}
+model RoleAssignment {
+  id String @id @default(uuid())
+  membershipId String
+  role Role
+  membership Membership @relation(fields:[membershipId],references:[id],onDelete:Cascade)
+  @@unique([membershipId,role])
+}
+model Session {
+  id String @id @default(uuid())
+  tokenHash String @unique
+  userId String
+  membershipId String
+  csrfToken String
+  expiresAt DateTime
+  revokedAt DateTime?
+  mfaVerified Boolean @default(false)
+  createdAt DateTime @default(now())
+  user User @relation(fields:[userId],references:[id])
+  membership Membership @relation(fields:[membershipId],references:[id])
+  @@index([userId])
+}
+model ContactToken {
+  id String @id @default(uuid())
+  userId String
+  tokenHash String @unique
+  kind String
+  expiresAt DateTime
+  usedAt DateTime?
+  user User @relation(fields:[userId],references:[id])
+}
+model MfaRecoveryCode {
+  id String @id @default(uuid())
+  userId String
+  codeHash String @unique
+  createdAt DateTime @default(now())
+  usedAt DateTime?
+  user User @relation(fields:[userId],references:[id],onDelete:Cascade)
+  @@index([userId])
+}
+model CourseAssignment {
+  id String @id @default(uuid())
+  userId String
+  courseId String
+  user User @relation(fields:[userId],references:[id])
+  course Course @relation(fields:[courseId],references:[id])
+  @@unique([userId,courseId])
+}
+model Course {
+  id String @id @default(uuid())
+  organizationId String
+  slug String @unique
+  title String
+  summary String
+  subject String
+  level String
+  language String @default("en")
+  format String @default("Self paced")
+  instructorName String
+  effortMinutes Int @default(120)
+  isPublic Boolean @default(false)
+  freeEnrollment Boolean @default(true)
+  state CourseState @default(DRAFT)
+  currentVersionId String?
+  createdAt DateTime @default(now())
+  organization Organization @relation(fields:[organizationId], references:[id])
+  versions CourseVersion[]
+  assignments CourseAssignment[]
+  enrollments Enrollment[]
+  invitations EnrollmentInvitation[]
+  @@index([organizationId,state])
+}
+model CourseVersion {
+  id String @id @default(uuid())
+  courseId String
+  number Int
+  revision Int @default(1)
+  state CourseState @default(DRAFT)
+  title String
+  description String
+  outcomes String[]
+  prerequisites String[]
+  completionRule String @default("Complete every lesson and pass every practice and assignment.")
+  publishedAt DateTime?
+  createdAt DateTime @default(now())
+  course Course @relation(fields:[courseId],references:[id])
+  modules Module[]
+  enrollments Enrollment[]
+  @@unique([courseId,number])
+}
+model Module {
+  id String @id @default(uuid())
+  courseVersionId String
+  title String
+  position Int
+  courseVersion CourseVersion @relation(fields:[courseVersionId],references:[id])
+  activities ActivityVersion[]
+  @@unique([courseVersionId,position])
+}
+model ActivityVersion {
+  id String @id @default(uuid())
+  moduleId String
+  title String
+  kind ActivityKind
+  position Int
+  objective String
+  body String
+  example String @default("")
+  reflection String @default("")
+  estimatedMinutes Int @default(10)
+  videoUrl String?
+  captionsUrl String?
+  transcript String?
+  resources Json @default("[]")
+  accessibility Json @default("{}")
+  rights String @default("")
+  offlineAllowed Boolean @default(true)
+  prerequisiteIds String[]
+  module Module @relation(fields:[moduleId],references:[id])
+  assessment AssessmentVersion?
+  rubric RubricVersion?
+  completions ActivityCompletion[]
+  events ProgressEvent[]
+  submissions Submission[]
+  @@unique([moduleId,position])
+}
+model AssessmentVersion {
+  id String @id @default(uuid())
+  activityId String @unique
+  maxAttempts Int @default(3)
+  passPercent Int @default(70)
+  feedbackRelease String @default("AFTER_SUBMIT")
+  deadline DateTime?
+  timeLimitMinutes Int?
+  activity ActivityVersion @relation(fields:[activityId],references:[id])
+  questions QuestionVersion[]
+  attempts Attempt[]
+}
+model QuestionVersion {
+  id String @id @default(uuid())
+  assessmentId String
+  position Int
+  kind QuestionKind
+  prompt String
+  options Json @default("[]")
+  answer Json
+  explanation String
+  points Int @default(1)
+  assessment AssessmentVersion @relation(fields:[assessmentId],references:[id])
+  @@unique([assessmentId,position])
+}
+model RubricVersion {
+  id String @id @default(uuid())
+  activityId String @unique
+  criteria Json
+  passPercent Int @default(70)
+  deadline DateTime?
+  activity ActivityVersion @relation(fields:[activityId],references:[id])
+}
+model Enrollment {
+  id String @id @default(uuid())
+  userId String
+  courseId String
+  courseVersionId String
+  state EnrollmentState @default(ACTIVE)
+  source String @default("SELF")
+  deadlineExtension DateTime?
+  extraAttempts Int @default(0)
+  extraTimeMinutes Int @default(0)
+  createdAt DateTime @default(now())
+  user User @relation(fields:[userId],references:[id])
+  course Course @relation(fields:[courseId],references:[id])
+  courseVersion CourseVersion @relation(fields:[courseVersionId],references:[id])
+  events ProgressEvent[]
+  completions ActivityCompletion[]
+  attempts Attempt[]
+  submissions Submission[]
+  @@unique([userId,courseId])
+}
+model EnrollmentInvitation {
+  id String @id @default(uuid())
+  courseId String
+  email String
+  codeHash String @unique
+  expiresAt DateTime
+  acceptedAt DateTime?
+  revokedAt DateTime?
+  course Course @relation(fields:[courseId],references:[id])
+  @@index([courseId,email])
+}
+model ProgressEvent {
+  id String @id
+  enrollmentId String
+  activityId String
+  state ProgressState
+  clientAt DateTime?
+  createdAt DateTime @default(now())
+  enrollment Enrollment @relation(fields:[enrollmentId],references:[id])
+  activity ActivityVersion @relation(fields:[activityId],references:[id])
+  @@index([enrollmentId])
+}
+model ActivityCompletion {
+  id String @id @default(uuid())
+  enrollmentId String
+  activityId String
+  state ProgressState
+  updatedAt DateTime @updatedAt
+  enrollment Enrollment @relation(fields:[enrollmentId],references:[id])
+  activity ActivityVersion @relation(fields:[activityId],references:[id])
+  @@unique([enrollmentId,activityId])
+}
+model Attempt {
+  id String @id @default(uuid())
+  enrollmentId String
+  assessmentId String
+  number Int
+  state AttemptState @default(STARTED)
+  frozenQuestions Json
+  startedAt DateTime @default(now())
+  expiresAt DateTime?
+  submittedAt DateTime?
+  score Float?
+  passed Boolean?
+  enrollment Enrollment @relation(fields:[enrollmentId],references:[id])
+  assessment AssessmentVersion @relation(fields:[assessmentId],references:[id])
+  responses Response[]
+  @@unique([enrollmentId,assessmentId,number])
+}
+model Response {
+  id String @id @default(uuid())
+  attemptId String
+  questionId String
+  answer Json
+  correct Boolean
+  points Int
+  attempt Attempt @relation(fields:[attemptId],references:[id])
+  @@unique([attemptId,questionId])
+}
+model Submission {
+  id String @id @default(uuid())
+  enrollmentId String
+  activityId String
+  state SubmissionState @default(DRAFT)
+  text String @default("")
+  link String?
+  assetIds String[]
+  frozenRubric Json
+  revision Int @default(1)
+  requestId String? @unique
+  receipt String? @unique
+  submittedAt DateTime?
+  updatedAt DateTime @updatedAt
+  enrollment Enrollment @relation(fields:[enrollmentId],references:[id])
+  activity ActivityVersion @relation(fields:[activityId],references:[id])
+  grades Grade[]
+  receipts SubmissionReceipt[]
+  @@unique([enrollmentId,activityId])
+}
+model SubmissionReceipt {
+  id String @id @default(uuid())
+  submissionId String
+  requestId String @unique
+  receipt String @unique
+  revision Int
+  snapshot Json
+  createdAt DateTime @default(now())
+  submission Submission @relation(fields:[submissionId],references:[id])
+  @@unique([submissionId,revision])
+}
+model Grade {
+  id String @id @default(uuid())
+  submissionId String
+  graderId String
+  revision Int
+  submissionRevision Int @default(1)
+  criteriaScores Json
+  score Float
+  passed Boolean
+  feedback String
+  revisionRequested Boolean @default(false)
+  releasedAt DateTime?
+  createdAt DateTime @default(now())
+  submission Submission @relation(fields:[submissionId],references:[id])
+  feedbackHistory FeedbackRevision[]
+  @@unique([submissionId,revision])
+}
+model FeedbackRevision {
+  id String @id @default(uuid())
+  gradeId String
+  actorId String
+  feedback String
+  createdAt DateTime @default(now())
+  grade Grade @relation(fields:[gradeId],references:[id])
+}
+model AuditEvent {
+  id String @id @default(uuid())
+  actorId String
+  organizationId String
+  action String
+  objectId String
+  detail Json?
+  createdAt DateTime @default(now())
+  @@index([organizationId,createdAt])
+}
+model Notification {
+  id String @id @default(uuid())
+  userId String
+  organizationId String
+  eventId String @unique
+  title String
+  body String
+  readAt DateTime?
+  createdAt DateTime @default(now())
+  @@index([userId,organizationId])
+}
+model SupportRequest {
+  id String @id @default(uuid())
+  userId String
+  organizationId String
+  activityId String?
+  kind SupportRequestKind @default(HELP)
+  subject String
+  message String
+  status String @default("OPEN")
+  response String?
+  createdAt DateTime @default(now())
+}
+model Asset {
+  id String @id @default(uuid())
+  organizationId String
+  userId String
+  key String @unique
+  name String
+  mime String
+  size Int
+  status AssetStatus @default(UPLOADING)
+  createdAt DateTime @default(now())
+}
+model OutboxEvent {
+  id String @id @default(uuid())
+  type String
+  payload Json
+  status OutboxStatus @default(PENDING)
+  attempts Int @default(0)
+  createdAt DateTime @default(now())
+  lastError String?
+}
