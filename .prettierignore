@@ -1,0 +1,11 @@
+node_modules
+.next
+dist
+tmp
+.local
+pnpm-lock.yaml
+packages/api-client/src/schema.d.ts
+apps/api/prisma/migrations
+apps/web/next-env.d.ts
+test-results
+playwright-report
