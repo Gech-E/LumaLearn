@@ -1,0 +1,10 @@
+import { writeFileSync } from 'node:fs';
+import openapiTS, { astToString, COMMENT_HEADER } from 'openapi-typescript';
+const base = process.env.API_URL || 'http://127.0.0.1:4000';
+const response = await fetch(`${base}/api/v1/openapi.json`);
+if (!response.ok) throw new Error(`OpenAPI request failed: ${response.status}`);
+const document = await response.json();
+writeFileSync('packages/api-client/openapi.json', `${JSON.stringify(document, null, 2)}\n`);
+const types = await openapiTS(document);
+writeFileSync('packages/api-client/src/schema.d.ts', COMMENT_HEADER + astToString(types));
+console.log('Generated API types from the running NestJS contract.');
