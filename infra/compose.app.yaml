@@ -1,0 +1,57 @@
+# Optional complete local stack: docker compose -f infra/compose.yaml -f infra/compose.app.yaml up --build -d
+services:
+  migrate:
+    build: { context: .., dockerfile: infra/Dockerfile, target: migration }
+    environment:
+      DATABASE_URL: postgresql://pathway:pathway-local-db@postgres:5432/pathway?schema=public
+    depends_on:
+      postgres: { condition: service_healthy }
+  api:
+    build: { context: .., dockerfile: infra/Dockerfile, target: api }
+    init: true
+    environment: &app-env
+      NODE_ENV: development
+      DATABASE_URL: postgresql://pathway:pathway-local-db@postgres:5432/pathway?schema=public
+      WEB_ORIGIN: http://localhost:3000
+      REDIS_URL: redis://redis:6379
+      S3_ENDPOINT: http://minio:9000
+      S3_PUBLIC_ENDPOINT: http://localhost:9000
+      S3_ACCESS_KEY: pathway
+      S3_SECRET_KEY: pathway-local-storage
+      S3_BUCKET: pathway-private
+      SMTP_HOST: mailpit
+      SMTP_PORT: 1025
+      CLAMAV_HOST: clamav
+      CLAMAV_PORT: 3310
+      COOKIE_SECURE: 'false'
+    ports: ['127.0.0.1:4000:4000']
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+      minio-init: { condition: service_completed_successfully }
+  web:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile
+      target: web
+      args: { API_INTERNAL_URL: 'http://api:4000' }
+    init: true
+    environment:
+      API_INTERNAL_URL: http://api:4000
+      NODE_ENV: production
+    ports: ['127.0.0.1:3000:3000']
+    depends_on: [api]
+  worker:
+    build: { context: .., dockerfile: infra/Dockerfile, target: api }
+    command: node dist/worker.js
+    init: true
+    stop_grace_period: 2m
+    healthcheck: { disable: true }
+    environment: *app-env
+    depends_on: [api]
+  seed:
+    profiles: [tools]
+    build: { context: .., dockerfile: infra/Dockerfile, target: development-tools }
+    environment: *app-env
+    depends_on:
+      migrate: { condition: service_completed_successfully }
