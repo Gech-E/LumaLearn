@@ -1,0 +1,60 @@
+# App-only production template: external private PostgreSQL, Redis, S3, SMTP and
+# ClamAV must already exist. No dependency credentials or public ports are supplied.
+name: pathway-production
+x-runtime: &runtime
+  init: true
+  restart: unless-stopped
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  tmpfs: [/tmp:rw, noexec, nosuid, size=64m]
+  stop_grace_period: 30s
+  logging:
+    driver: json-file
+    options: { max-size: 10m, max-file: '5' }
+  networks: [application]
+
+services:
+  migrate:
+    <<: *runtime
+    image: ${PATHWAY_MIGRATION_IMAGE:?Set an immutable migration image digest}
+    restart: 'no'
+    env_file: ${PATHWAY_ENV_FILE:?Set the absolute path to a restricted production env file}
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: ${PATHWAY_MIGRATION_DATABASE_URL:?Set the dedicated migration-role database URL}
+  api:
+    <<: *runtime
+    image: ${PATHWAY_API_IMAGE:?Set an immutable API image digest}
+    env_file: ${PATHWAY_ENV_FILE:?Set the absolute path to a restricted production env file}
+    environment: { NODE_ENV: production, PORT: '4000', COOKIE_SECURE: 'true' }
+    expose: ['4000']
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+  worker:
+    <<: *runtime
+    image: ${PATHWAY_API_IMAGE:?Set an immutable API image digest}
+    command: [node, dist/worker.js]
+    env_file: ${PATHWAY_ENV_FILE:?Set the absolute path to a restricted production env file}
+    environment: { NODE_ENV: production, COOKIE_SECURE: 'true' }
+    healthcheck: { disable: true }
+    stop_grace_period: 2m
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+  web:
+    <<: *runtime
+    image: ${PATHWAY_WEB_IMAGE:?Set an immutable web image digest}
+    environment: { NODE_ENV: production, PORT: '3000', HOSTNAME: 0.0.0.0 }
+    expose: ['3000']
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+      - /app/apps/web/.next/cache:rw,noexec,nosuid,size=128m,uid=1000,gid=1000
+    networks: [application, edge]
+    depends_on:
+      api: { condition: service_healthy }
+
+networks:
+  application: {}
+  edge:
+    external: true
+    name: ${PATHWAY_EDGE_NETWORK:?Set the existing HTTPS reverse-proxy network}
