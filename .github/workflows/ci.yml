@@ -1,0 +1,168 @@
+name: Pathway checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pathway-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality-and-api:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: pathway
+          POSTGRES_PASSWORD: pathway-ci-db
+          POSTGRES_DB: pathway_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pathway -d pathway_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 15
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://pathway:pathway-ci-db@127.0.0.1:5432/pathway_test?schema=public&connection_limit=5
+      TEST_DATABASE_URL: postgresql://pathway:pathway-ci-db@127.0.0.1:5432/pathway_test?schema=public&connection_limit=5
+      WEB_ORIGIN: http://localhost:3000
+      S3_ACCESS_KEY: pathway-ci
+      S3_SECRET_KEY: pathway-ci-storage
+      MFA_ENCRYPTION_KEY: 8f792ce1ab694e83e59b3b5e15ab978ed9cd8cd6a650b2fcab5a2737a16cf4a1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install pinned package manager and dependencies
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.28.0 --activate
+          pnpm install --frozen-lockfile
+      - name: Generate client and install database invariants
+        run: |
+          pnpm db:generate
+          pnpm --filter @pathway/api exec prisma validate
+          pnpm db:migrate
+      - name: Formatting, lint and strict types
+        run: |
+          pnpm format:check
+          pnpm lint
+          pnpm typecheck
+      - name: Unit and real PostgreSQL API checks
+        run: pnpm test
+      - name: API and production web builds
+        env:
+          NODE_ENV: production
+        run: pnpm build
+      - name: Review installed dependency advisories
+        run: pnpm audit --audit-level high
+
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: quality-and-api
+    env:
+      CI: 'true'
+      API_INTERNAL_URL: http://localhost:4000
+      # This isolated job creates many fictional accounts; production defaults remain 100.
+      AUTH_RATE_LIMIT_MAX: '500'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install dependencies and Chromium
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.28.0 --activate
+          pnpm install --frozen-lockfile
+          pnpm exec playwright install --with-deps chromium
+      - name: Start private local dependencies
+        run: |
+          cp .env.example apps/api/.env
+          docker compose -f infra/compose.yaml up --build -d
+      - name: Migrate, seed and build
+        run: |
+          pnpm db:generate
+          for attempt in $(seq 1 60); do
+            if docker compose -f infra/compose.yaml exec -T postgres pg_isready -U pathway -d pathway; then break; fi
+            sleep 2
+          done
+          pnpm db:migrate
+          pnpm db:seed
+          pnpm build
+      - name: Start API, worker and web
+        run: |
+          mkdir -p .local
+          pnpm --filter @pathway/api start > .local/ci-api.log 2>&1 &
+          pnpm --filter @pathway/api worker:start > .local/ci-worker.log 2>&1 &
+          pnpm --filter @pathway/web start > .local/ci-web.log 2>&1 &
+          for attempt in $(seq 1 90); do
+            if curl --fail --silent http://localhost:4000/api/v1/health/ready > .local/ci-readiness.json && curl --fail --silent http://localhost:3000 > /dev/null; then exit 0; fi
+            sleep 5
+          done
+          echo "Application readiness did not pass; inspect uploaded service logs."
+          exit 1
+      - name: Critical workflows and accessibility checks
+        run: pnpm test:e2e
+      - name: Verify real SMTP, private storage and antivirus adapters
+        run: pnpm services:verify
+      - name: Collect infrastructure logs
+        if: always()
+        run: |
+          mkdir -p .local
+          docker compose -f infra/compose.yaml logs --no-color > .local/ci-infrastructure.log 2>&1
+      - name: Retain test and diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pathway-browser-evidence
+          path: |
+            playwright-report/
+            test-results/
+            docs/evidence/
+            .local/ci-*.log
+            .local/ci-readiness.json
+            .local/service-verification.json
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Stop isolated CI dependencies
+        if: always()
+        run: docker compose -f infra/compose.yaml down
+
+  containers:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: quality-and-api
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build isolated production runtime and migration images
+        run: |
+          docker build -f infra/Dockerfile --target api -t pathway-api:ci .
+          docker build -f infra/Dockerfile --target web -t pathway-web:ci .
+          docker build -f infra/Dockerfile --target migration -t pathway-migration:ci .
+      - name: Inspect production package boundaries and native dependencies
+        run: |
+          docker run --rm --entrypoint node pathway-api:ci -e "require('@prisma/client'); require('argon2'); for (const name of ['jest','typescript','prisma']) { try { require.resolve(name); throw new Error(name + ' must stay outside the API runtime'); } catch (error) { if (error.code !== 'MODULE_NOT_FOUND') throw error; } }"
+          docker run --rm --entrypoint sh pathway-api:ci -c 'test ! -e .env && test ! -d src && test ! -d test && test ! -d prisma && test "$(id -u)" != 0'
+          docker run --rm --entrypoint sh pathway-web:ci -c 'test -f apps/web/server.js && test -d apps/web/.next/static && test ! -e apps/web/.env && test ! -d apps/web/src && test "$(id -u)" != 0'
+
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
