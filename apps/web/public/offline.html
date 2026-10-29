@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#12675b" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; connect-src 'self'; font-src 'self'; img-src 'self' data:"
+    />
+    <title>Pathway · Offline lessons</title>
+    <link rel="stylesheet" href="/offline/offline.css" />
+    <script type="module" src="/offline/offline.js"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to downloaded lessons</a>
+    <header><strong>Pathway</strong><a href="/downloads">Return to Pathway</a></header>
+    <main id="main">
+      <p class="eyebrow">LEARNING, EVEN WITHOUT A CONNECTION</p>
+      <h1>Downloaded lessons</h1>
+      <p>
+        Read saved lessons and text resources on this device. Connect and sign in to Pathway to sync
+        pending progress. Practices and assignment submissions need a connection.
+      </p>
+      <p id="status" role="status" aria-live="polite">Opening your downloads…</p>
+      <div id="private-content" hidden>
+        <p id="pending" class="notice"></p>
+        <section id="lessons" aria-label="Saved lessons"></section>
+        <article id="reader" hidden aria-labelledby="lesson-title"></article>
+      </div>
+      <noscript><p>Enable JavaScript to open lessons stored on this device.</p></noscript>
+    </main>
+    <footer>
+      Saved lessons expire after seven days. Signing out of Pathway clears private data from this
+      device.
+    </footer>
+  </body>
+</html>
